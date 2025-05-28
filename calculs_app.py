@@ -181,4 +181,5 @@ for i, mat in enumerate(st.session_state.panneaux):
         with st.expander("⚙️ Options avancées"):
             if st.checkbox("Activer la découpe optimisée (nesting)", key=f"optimize_{mat}_{panneau_idx}"):
                 st.warning("L'algorithme d'optimisation sera intégré ici.")
-            if st.checkbox("Activer la
+            if st.checkbox("Activer la vue 3D", key=f"3d_{mat}_{panneau_idx}"):
+                st.info("Vue 3D non implémentée dans cette version.")

@@ -48,6 +48,18 @@ panneau = st.session_state.panneaux[choix]
 # === NOM DU PANNEAU ===
 panneau["nom"] = st.sidebar.text_input("Nom du panneau", panneau["nom"])
 
+# === DÉFINITION DIMENSIONS PANNEAU/BARRE ===
+st.sidebar.markdown("---")
+if choix == "Bois":
+    st.sidebar.subheader("Dimensions du panneau")
+    panneau["longueur"] = st.sidebar.number_input("Longueur panneau (mm)", min_value=1, value=panneau["longueur"])
+    panneau["largeur"] = st.sidebar.number_input("Largeur panneau (mm)", min_value=1, value=panneau["largeur"])
+elif choix == "Métal":
+    st.sidebar.subheader("Dimensions de la barre")
+    panneau["longueur"] = st.sidebar.number_input("Longueur barre (mm)", min_value=1, value=panneau["longueur"])
+    panneau["largeur"] = MATERIALS["Métal"]["largeur"]
+    st.sidebar.markdown(f"**Largeur barre :** {panneau['largeur']} mm (fixée)")
+
 # === AJOUT D'UNE PIÈCE ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("Ajouter une pièce")

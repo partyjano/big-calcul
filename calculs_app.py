@@ -5,14 +5,12 @@ from fpdf import FPDF
 
 # === CONFIGURATION INITIALE ===
 st.set_page_config(page_title="Optimisation Découpe", layout="wide")
-# Si tu veux une image de logo, mets un fichier logo.gif dans le même dossier
-# sinon commente la ligne suivante :
-# st.image("logo.gif", width=150)
+st.image("logo.gif", width=150)
 
 # === CONSTANTES ===
 MATERIALS = {
     "Bois": {"longueur": 2440, "largeur": 1220, "densite": 600},
-    "Métal": {"longueur": 6000, "largeur": 1000, "densite": 7850}
+    "Métal": {"longueur": 6000, "largeur": None, "densite": 7850}
 }
 
 # === ALGORITHME MAXRECTS ===
@@ -66,6 +64,7 @@ class MaxRectsBinPack:
         return newNode
 
     def place_rect(self, node, free_rect_index):
+        # Place rectangle and split free space
         self.used_rectangles.append(node)
         free_rect = self.free_rectangles.pop(free_rect_index)
 
@@ -81,6 +80,7 @@ class MaxRectsBinPack:
         self.prune_free_list()
 
     def prune_free_list(self):
+        # Remove any redundant free rectangles
         i = 0
         while i < len(self.free_rectangles):
             j = i + 1
@@ -122,6 +122,7 @@ class MaxRectsBinPack:
             score = self.contact_point_score(free_rect.x, free_rect.y, width, height)
             return -score, 0
         else:
+            # Par défaut best_short_side_fit
             short_side = min(leftover_h, leftover_v)
             long_side = max(leftover_h, leftover_v)
             return short_side, long_side
@@ -144,12 +145,12 @@ class MaxRectsBinPack:
                     score += horiz_overlap
         return score
 
-# === UTILITAIRES ===
+# === FONCTIONS UTILITAIRES ===
 def nom_panneau(mat, type_piece):
     if mat == "Bois":
-        return "Panneaux" if type_piece == "Panneau" else "Tasseaux"
+        return "Panneaux Bois" if type_piece == "Panneau" else "Tasseaux Bois"
     else:
-        return "Tôles" if type_piece == "Panneau" else "Barres"
+        return "Tôles Métal" if type_piece == "Panneau" else "Barres Métal"
 
 def dessiner_optimisation(panneau, placements):
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -168,6 +169,7 @@ def dessiner_optimisation(panneau, placements):
 
     for i, (rect, piece) in enumerate(zip(placements, panneau["pieces"])):
         if rect is None:
+            # Pièce non placée
             continue
         ax.add_patch(
             patches.Rectangle((rect.x, rect.y), rect.width, rect.height,
@@ -180,14 +182,28 @@ def dessiner_optimisation(panneau, placements):
     ax.set_ylabel("Largeur (mm)", fontsize=14)
     return fig
 
-# === SESSION STATE INIT ===
+def export_pdf(panneau):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=14)
+    pdf.cell(200, 10, txt=panneau["nom"], ln=1, align='C')
+    pdf.set_font("Arial", size=12)
+
+    for idx, piece in enumerate(panneau["pieces"]):
+        line = f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm"
+        if "profil" in piece and piece["profil"]:
+            line += f" (Profil: {piece['profil']})"
+        pdf.cell(200, 10, txt=line, ln=1)
+    return pdf.output(dest='S').encode("latin1")
+
+# === INITIALISATION SESSION STATE ===
 if "panneaux" not in st.session_state:
     st.session_state.panneaux = {}
     for mat in MATERIALS.keys():
         for t in ["Panneau", "Barre"]:
             cle = f"{mat}_{t}"
             st.session_state.panneaux[cle] = {
-                "nom": f"{nom_panneau(mat,t)} {mat}",
+                "nom": nom_panneau(mat, t),
                 "materiau": mat,
                 "type": t,
                 "longueur": MATERIALS[mat]["longueur"],
@@ -242,6 +258,7 @@ if not panneau["pieces"]:
     st.info("Ajoutez des pièces pour ce panneau/barre dans le menu latéral.")
     st.stop()
 
+# === LISTE DES PIÈCES ===
 st.subheader("Liste des pièces")
 for idx, piece in enumerate(panneau["pieces"]):
     desc = f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm"
@@ -252,7 +269,7 @@ for idx, piece in enumerate(panneau["pieces"]):
 # === OPTIMISATION MAXRECTS ===
 st.subheader("Disposition optimisée (MaxRects)")
 
-# Trier par surface décroissante
+# On trie pièces par aire décroissante (optimisation classique)
 pieces_sorted = sorted(panneau["pieces"], key=lambda p: p["longueur"]*p["largeur"], reverse=True)
 packer = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] if panneau["largeur"] else 1000, allow_rotate=True)
 
@@ -260,8 +277,12 @@ placements = []
 for piece in pieces_sorted:
     rect = packer.insert(piece["longueur"], piece["largeur"], method='best_short_side_fit')
     if rect is None:
-        rect = packer.insert(piece["largeur"], piece["longueur"], method='best_short_side_fit')
+        rect = packer.insert(piece["largeur"], piece["longueur"], method='best_short_side_fit')  # tentative rotation si pas déjà testée
     placements.append(rect)
+
+# Aligner les placements avec l'ordre original (par indices)
+# pieces_sorted => original order, donc on doit associer.
+# Simplifions : affichons selon ordre trié (numérotation séquentielle)
 
 fig = dessiner_optimisation(panneau, placements)
 st.pyplot(fig)

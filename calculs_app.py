@@ -14,26 +14,27 @@ st.image("logo.gif", width=150)
 
 # === CONSTANTES ===
 MATERIALS = {
-    "Bois": {"longueur": 2440, "largeur": 1220, "densite": 600},
-    "Métal": {"longueur": 6000, "largeur": 100, "densite": 7850}  # largeur fictive
+    "Bois": {"longueur": 2440, "largeur": 1220, "epaisseur": 18, "densite": 600},
+    "Métal": {"longueur": 6000, "largeur": 100, "epaisseur": 5, "densite": 7850}  # largeur fictive et épaisseur par défaut
 }
 
-# --- Fonction panneau initial ---
 def panneau_initial(materiau):
-    dim = MATERIALS[materiau]
+    base = MATERIALS[materiau]
     return {
         "nom": f"Panneau {materiau} 1",
-        "longueur": dim["longueur"],
-        "largeur": dim["largeur"],
-        "epaisseur": 18 if materiau == "Bois" else 5,
+        "longueur": base["longueur"],
+        "largeur": base["largeur"],
+        "epaisseur": base["epaisseur"],
         "pieces": []
     }
 
 # === INITIALISATION ===
 if "panneaux" not in st.session_state:
     st.session_state.panneaux = {}
+
 if "actif" not in st.session_state:
     st.session_state.actif = None
+
 if "confirm_restore" not in st.session_state:
     st.session_state.confirm_restore = False
 
@@ -42,14 +43,15 @@ st.sidebar.header("Paramètres globaux")
 materiau = st.sidebar.selectbox("Matériau principal", list(MATERIALS.keys()))
 
 # Initialiser un panneau si nécessaire
-if materiau not in st.session_state.panneaux:
+if materiau not in st.session_state.panneaux or len(st.session_state.panneaux[materiau]) == 0:
     st.session_state.panneaux[materiau] = [panneau_initial(materiau)]
     st.session_state.actif = (materiau, 0)
 
-# --- Bouton restaurer avec confirmation ---
+# === BOUTON RESTAURER AVEC CONFIRMATION ===
 if not st.session_state.confirm_restore:
     if st.sidebar.button("🔄 Restaurer données"):
         st.session_state.confirm_restore = True
+        st.experimental_rerun()
 else:
     st.sidebar.warning("⚠️ Êtes-vous sûr de vouloir restaurer ? Cela supprimera les modifications actuelles.")
     col1, col2 = st.sidebar.columns(2)
@@ -62,6 +64,7 @@ else:
     with col2:
         if st.button("Annuler"):
             st.session_state.confirm_restore = False
+            st.experimental_rerun()
 
 # === ONGLET PAR MATÉRIAU ===
 tabs = st.tabs(list(st.session_state.panneaux.keys()))
@@ -75,18 +78,17 @@ for i, mat in enumerate(st.session_state.panneaux):
         panneau = st.session_state.panneaux[mat][panneau_idx]
         st.session_state.actif = (mat, panneau_idx)
 
+        # === MODIFIER DIMENSIONS PANNEL DE BASE ===
+        st.subheader("Dimensions du panneau de base (mm)")
+        longueur_base = st.number_input(f"Longueur panneau ({mat})", min_value=1, value=panneau["longueur"])
+        largeur_base = st.number_input(f"Largeur panneau ({mat})", min_value=1, value=panneau["largeur"])
+        epaisseur_base = st.number_input(f"Épaisseur panneau ({mat})", min_value=1, value=panneau.get("epaisseur", 18))
+        panneau["longueur"] = longueur_base
+        panneau["largeur"] = largeur_base
+        panneau["epaisseur"] = epaisseur_base
+
         # === NOM DU PANNEAU ===
         panneau["nom"] = st.text_input("Nom du panneau", panneau["nom"])
-
-        # === Dimensions du panneau/barre de base modifiables ===
-        st.subheader("Dimensions du panneau/barre de base")
-        base_long = st.number_input(f"Longueur base (mm) [{mat}]", min_value=1, value=panneau["longueur"], key=f"base_long_{mat}_{panneau_idx}")
-        base_larg = st.number_input(f"Largeur base (mm) [{mat}]", min_value=1, value=panneau["largeur"], key=f"base_larg_{mat}_{panneau_idx}")
-        base_epais = st.number_input(f"Épaisseur base (mm) [{mat}]", min_value=1, value=panneau.get("epaisseur", 18), key=f"base_epais_{mat}_{panneau_idx}")
-
-        panneau["longueur"] = base_long
-        panneau["largeur"] = base_larg
-        panneau["epaisseur"] = base_epais
 
         # === AJOUT D'UNE PIÈCE ===
         st.subheader("Ajouter une pièce")
@@ -98,11 +100,9 @@ for i, mat in enumerate(st.session_state.panneaux):
         with col3:
             epaisseur = st.number_input("Épaisseur (mm)", min_value=1, value=18)
         quantite = st.number_input("Quantité", min_value=1, value=1, step=1)
-
-        profil_default = f"{longueur}x{largeur}x{epaisseur} mm"
         profil = ""
         if mat == "Métal":
-            profil = st.text_input("Profil (L x l x e mm)", profil_default)
+            profil = st.text_input("Profil (L x l x e mm)", "40x40x2")
 
         if st.button("Ajouter la pièce", key=f"add_piece_{mat}_{panneau_idx}"):
             for _ in range(quantite):
@@ -116,17 +116,20 @@ for i, mat in enumerate(st.session_state.panneaux):
         # === AFFICHAGE DES PIÈCES ===
         st.subheader("Liste des pièces")
         for idx, piece in enumerate(panneau["pieces"]):
-            st.markdown(f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm | Profil : {piece.get('profil', '')}")
+            st.markdown(f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm  " +
+                        (f"Profil: {piece['profil']}" if piece['profil'] else ""))
 
         # === VISUALISATION ===
         st.subheader("Disposition simulée")
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(8, 5))
         ax.set_xlim(0, panneau["longueur"])
         ax.set_ylim(0, panneau["largeur"] or 200)
         ax.set_aspect('equal')
         ax.invert_yaxis()
-        ax.set_xticks(range(0, int(panneau["longueur"])+1, 10))
-        ax.set_yticks(range(0, int(panneau["largeur"])+1, 10))
+
+        # Graduations au cm
+        ax.set_xticks(range(0, panneau["longueur"] + 1, 10))
+        ax.set_yticks(range(0, panneau["largeur"] + 1, 10))
         ax.grid(True, which='both', color='lightgray', linestyle='--', linewidth=0.5)
 
         x, y = 0, 0
@@ -158,7 +161,10 @@ for i, mat in enumerate(st.session_state.panneaux):
             pdf.cell(200, 10, txt=panneau["nom"], ln=1, align='C')
 
             for idx, piece in enumerate(panneau["pieces"]):
-                pdf.cell(200, 10, txt=f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm", ln=1)
+                txt = f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm"
+                if piece['profil']:
+                    txt += f"  Profil: {piece['profil']}"
+                pdf.cell(200, 10, txt=txt, ln=1)
 
             return pdf.output(dest='S').encode("latin1")
 

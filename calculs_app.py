@@ -3,298 +3,296 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from fpdf import FPDF
 
-# === CONFIG INIT ===
-st.set_page_config(page_title="Optimisation Multi-Panneaux MaxRects", layout="wide")
+# === CONFIGURATION INITIALE ===
+st.set_page_config(page_title="Optimisation Découpe", layout="wide")
+# Si tu veux une image de logo, mets un fichier logo.gif dans le même dossier
+# sinon commente la ligne suivante :
+# st.image("logo.gif", width=150)
 
-# === CONSTANTES MATÉRIAUX ===
+# === CONSTANTES ===
 MATERIALS = {
     "Bois": {"longueur": 2440, "largeur": 1220, "densite": 600},
-    "Métal": {"longueur": 6000, "largeur": None, "densite": 7850}
+    "Métal": {"longueur": 6000, "largeur": 1000, "densite": 7850}
 }
 
-# === MAXRECTS ALGO (comme avant) ===
+# === ALGORITHME MAXRECTS ===
 class Rect:
-    def __init__(self, x, y, width, height):
+    def __init__(self, x=0, y=0, width=0, height=0):
         self.x = x
         self.y = y
         self.width = width
         self.height = height
+    
+    def __repr__(self):
+        return f"Rect(x={self.x}, y={self.y}, w={self.width}, h={self.height})"
 
 class MaxRectsBinPack:
-    def __init__(self, width, height):
+    def __init__(self, width, height, allow_rotate=True):
         self.bin_width = width
         self.bin_height = height
+        self.allow_rotate = allow_rotate
         self.used_rectangles = []
         self.free_rectangles = [Rect(0, 0, width, height)]
 
-    def insert(self, width, height, method):
-        score1 = float('inf')
-        score2 = float('inf')
-        bestShortSideFit = float('inf')
-        bestLongSideFit = float('inf')
-        bestAreaFit = float('inf')
-        bestNode = None
-        rotated = False
+    def insert(self, width, height, method='best_short_side_fit'):
+        newNode = None
+        score1 = float('inf')  # Best score for the method
+        score2 = float('inf')  # Secondary score for tiebreakers
+        best_rect_index = -1
 
-        for rect in self.free_rectangles:
-            if rect.width >= width and rect.height >= height:
-                leftover_h = abs(rect.height - height)
-                leftover_w = abs(rect.width - width)
-                shortSideFit = min(leftover_h, leftover_w)
-                longSideFit = max(leftover_h, leftover_w)
-                areaFit = rect.width * rect.height - width * height
-                if self._check_score(method, shortSideFit, longSideFit, areaFit, bestShortSideFit, bestLongSideFit, bestAreaFit):
-                    bestNode = Rect(rect.x, rect.y, width, height)
-                    bestShortSideFit = shortSideFit
-                    bestLongSideFit = longSideFit
-                    bestAreaFit = areaFit
-                    rotated = False
+        for i, freeRect in enumerate(self.free_rectangles):
+            # Try to place without rotation
+            if freeRect.width >= width and freeRect.height >= height:
+                score1_candidate, score2_candidate = self.score_rect(freeRect, width, height, method)
+                if score1_candidate < score1 or (score1_candidate == score1 and score2_candidate < score2):
+                    newNode = Rect(freeRect.x, freeRect.y, width, height)
+                    score1 = score1_candidate
+                    score2 = score2_candidate
+                    best_rect_index = i
 
-            if rect.width >= height and rect.height >= width:
-                leftover_h = abs(rect.height - width)
-                leftover_w = abs(rect.width - height)
-                shortSideFit = min(leftover_h, leftover_w)
-                longSideFit = max(leftover_h, leftover_w)
-                areaFit = rect.width * rect.height - height * width
-                if self._check_score(method, shortSideFit, longSideFit, areaFit, bestShortSideFit, bestLongSideFit, bestAreaFit):
-                    bestNode = Rect(rect.x, rect.y, height, width)
-                    bestShortSideFit = shortSideFit
-                    bestLongSideFit = longSideFit
-                    bestAreaFit = areaFit
-                    rotated = True
+            # Try with rotation
+            if self.allow_rotate and freeRect.width >= height and freeRect.height >= width:
+                score1_candidate, score2_candidate = self.score_rect(freeRect, height, width, method)
+                if score1_candidate < score1 or (score1_candidate == score1 and score2_candidate < score2):
+                    newNode = Rect(freeRect.x, freeRect.y, height, width)
+                    score1 = score1_candidate
+                    score2 = score2_candidate
+                    best_rect_index = i
 
-        if bestNode is None:
-            return None, False
+        if newNode is None:
+            return None  # Pas de place
 
-        self._place_rect(bestNode)
-        return bestNode, rotated
+        self.place_rect(newNode, best_rect_index)
+        return newNode
 
-    def _check_score(self, method, shortSideFit, longSideFit, areaFit, bestShortSideFit, bestLongSideFit, bestAreaFit):
-        if method == "Best Short Side Fit":
-            return shortSideFit < bestShortSideFit or (shortSideFit == bestShortSideFit and longSideFit < bestLongSideFit)
-        elif method == "Best Long Side Fit":
-            return longSideFit < bestLongSideFit or (longSideFit == bestLongSideFit and shortSideFit < bestShortSideFit)
-        elif method == "Best Area Fit":
-            return areaFit < bestAreaFit or (areaFit == bestAreaFit and shortSideFit < bestShortSideFit)
-        elif method == "Bottom-Left":
-            return areaFit < bestAreaFit
-        elif method == "Contact Point":
-            return shortSideFit < bestShortSideFit or (shortSideFit == bestShortSideFit and longSideFit < bestLongSideFit)
-        return False
-
-    def _place_rect(self, node):
-        i = 0
-        while i < len(self.free_rectangles):
-            if self._split_free_node(self.free_rectangles[i], node):
-                self.free_rectangles.pop(i)
-                i -= 1
-            i += 1
-        self._prune_free_list()
+    def place_rect(self, node, free_rect_index):
         self.used_rectangles.append(node)
+        free_rect = self.free_rectangles.pop(free_rect_index)
 
-    def _split_free_node(self, freeNode, usedNode):
-        if usedNode.x >= freeNode.x + freeNode.width or usedNode.x + usedNode.width <= freeNode.x or \
-           usedNode.y >= freeNode.y + freeNode.height or usedNode.y + usedNode.height <= freeNode.y:
-            return False
+        # Split free rectangle into up to 2 new free rectangles
+        if free_rect.width - node.width > 0:
+            new_rect = Rect(free_rect.x + node.width, free_rect.y,
+                            free_rect.width - node.width, node.height)
+            self.free_rectangles.append(new_rect)
+        if free_rect.height - node.height > 0:
+            new_rect = Rect(free_rect.x, free_rect.y + node.height,
+                            free_rect.width, free_rect.height - node.height)
+            self.free_rectangles.append(new_rect)
+        self.prune_free_list()
 
-        if usedNode.x < freeNode.x + freeNode.width and usedNode.x + usedNode.width > freeNode.x:
-            if usedNode.y > freeNode.y and usedNode.y < freeNode.y + freeNode.height:
-                newNode = Rect(freeNode.x, freeNode.y, freeNode.width, usedNode.y - freeNode.y)
-                self.free_rectangles.append(newNode)
-            if usedNode.y + usedNode.height < freeNode.y + freeNode.height:
-                newNode = Rect(freeNode.x, usedNode.y + usedNode.height, freeNode.width, freeNode.y + freeNode.height - (usedNode.y + usedNode.height))
-                self.free_rectangles.append(newNode)
-
-        if usedNode.y < freeNode.y + freeNode.height and usedNode.y + usedNode.height > freeNode.y:
-            if usedNode.x > freeNode.x and usedNode.x < freeNode.x + freeNode.width:
-                newNode = Rect(freeNode.x, freeNode.y, usedNode.x - freeNode.x, freeNode.height)
-                self.free_rectangles.append(newNode)
-            if usedNode.x + usedNode.width < freeNode.x + freeNode.width:
-                newNode = Rect(usedNode.x + usedNode.width, freeNode.y, freeNode.x + freeNode.width - (usedNode.x + usedNode.width), freeNode.height)
-                self.free_rectangles.append(newNode)
-
-        return True
-
-    def _prune_free_list(self):
+    def prune_free_list(self):
         i = 0
         while i < len(self.free_rectangles):
             j = i + 1
             while j < len(self.free_rectangles):
-                if self._is_contained_in(self.free_rectangles[i], self.free_rectangles[j]):
+                if self.is_contained_in(self.free_rectangles[i], self.free_rectangles[j]):
                     self.free_rectangles.pop(i)
                     i -= 1
                     break
-                if self._is_contained_in(self.free_rectangles[j], self.free_rectangles[i]):
+                if self.is_contained_in(self.free_rectangles[j], self.free_rectangles[i]):
                     self.free_rectangles.pop(j)
                     j -= 1
                 j += 1
             i += 1
 
-    def _is_contained_in(self, a, b):
-        return a.x >= b.x and a.y >= b.y and a.x + a.width <= b.x + b.width and a.y + a.height <= b.y + b.height
+    @staticmethod
+    def is_contained_in(r1, r2):
+        return r1.x >= r2.x and r1.y >= r2.y \
+            and r1.x + r1.width <= r2.x + r2.width \
+            and r1.y + r1.height <= r2.y + r2.height
 
+    def score_rect(self, free_rect, width, height, method):
+        leftover_h = abs(free_rect.width - width)
+        leftover_v = abs(free_rect.height - height)
+        leftover_area = free_rect.width * free_rect.height - width * height
+
+        if method == 'best_short_side_fit':
+            short_side = min(leftover_h, leftover_v)
+            long_side = max(leftover_h, leftover_v)
+            return short_side, long_side
+        elif method == 'best_long_side_fit':
+            short_side = min(leftover_h, leftover_v)
+            long_side = max(leftover_h, leftover_v)
+            return long_side, short_side
+        elif method == 'best_area_fit':
+            return leftover_area, min(leftover_h, leftover_v)
+        elif method == 'bottom_left':
+            return free_rect.y + height, free_rect.x
+        elif method == 'contact_point':
+            score = self.contact_point_score(free_rect.x, free_rect.y, width, height)
+            return -score, 0
+        else:
+            short_side = min(leftover_h, leftover_v)
+            long_side = max(leftover_h, leftover_v)
+            return short_side, long_side
+
+    def contact_point_score(self, x, y, width, height):
+        score = 0
+        if x == 0 or x + width == self.bin_width:
+            score += height
+        if y == 0 or y + height == self.bin_height:
+            score += width
+
+        for used in self.used_rectangles:
+            if used.x == x + width or used.x + used.width == x:
+                vert_overlap = min(used.y + used.height, y + height) - max(used.y, y)
+                if vert_overlap > 0:
+                    score += vert_overlap
+            if used.y == y + height or used.y + used.height == y:
+                horiz_overlap = min(used.x + used.width, x + width) - max(used.x, x)
+                if horiz_overlap > 0:
+                    score += horiz_overlap
+        return score
 
 # === UTILITAIRES ===
-def afficher_explanation(heuristique):
-    explanations = {
-        "Best Short Side Fit": "Minimise la différence sur le plus petit côté entre pièce et espace restant.",
-        "Best Long Side Fit": "Minimise la plus grande différence entre les côtés.",
-        "Best Area Fit": "Minimise la surface libre restante après placement.",
-        "Bottom-Left": "Place la pièce au plus bas à gauche possible.",
-        "Contact Point": "Favorise le placement avec le maximum de contact avec les autres pièces."
-    }
-    return explanations.get(heuristique, "")
+def nom_panneau(mat, type_piece):
+    if mat == "Bois":
+        return "Panneaux" if type_piece == "Panneau" else "Tasseaux"
+    else:
+        return "Tôles" if type_piece == "Panneau" else "Barres"
 
-def dessiner_plan(panneau, placement):
-    fig, ax = plt.subplots(figsize=(8, 5))
+def dessiner_optimisation(panneau, placements):
+    fig, ax = plt.subplots(figsize=(10, 7))
     ax.set_xlim(0, panneau["longueur"])
-    ax.set_ylim(0, panneau["largeur"] or 1000)
+    largeur = panneau["largeur"] if panneau["largeur"] else 1000
+    ax.set_ylim(0, largeur)
     ax.set_aspect('equal')
     ax.invert_yaxis()
-    ax.set_title(f"Disposition panneau {panneau['nom']}")
-    ax.set_xlabel("mm")
-    ax.set_ylabel("mm")
 
-    for i, rect in enumerate(placement):
-        x, y, w, h = rect["x"], rect["y"], rect["width"], rect["height"]
-        color = 'lightblue'
-        ax.add_patch(patches.Rectangle((x, y), w, h, edgecolor='black', facecolor=color))
-        ax.text(x + w/2, y + h/2, f"{i+1}", ha='center', va='center', fontsize=8)
+    step = 500
+    xticks = range(0, panneau["longueur"] + step, step)
+    yticks = range(0, largeur + step, step)
+    ax.set_xticks(xticks)
+    ax.set_yticks(yticks)
+    ax.tick_params(axis='both', labelsize=12)
 
+    for i, (rect, piece) in enumerate(zip(placements, panneau["pieces"])):
+        if rect is None:
+            continue
+        ax.add_patch(
+            patches.Rectangle((rect.x, rect.y), rect.width, rect.height,
+                              facecolor='lightgreen', edgecolor='black')
+        )
+        ax.text(rect.x + rect.width / 2, rect.y + rect.height / 2,
+                f"{i+1}", ha='center', va='center', fontsize=10)
+
+    ax.set_xlabel("Longueur (mm)", fontsize=14)
+    ax.set_ylabel("Largeur (mm)", fontsize=14)
     return fig
 
-# === STATE INIT ===
+# === SESSION STATE INIT ===
 if "panneaux" not in st.session_state:
-    st.session_state.panneaux = {
-        mat: {
-            "nom": f"Panneau {mat}",
-            "longueur": MATERIALS[mat]["longueur"],
-            "largeur": MATERIALS[mat]["largeur"],
-            "pieces": []
-        }
-        for mat in MATERIALS.keys()
-    }
+    st.session_state.panneaux = {}
+    for mat in MATERIALS.keys():
+        for t in ["Panneau", "Barre"]:
+            cle = f"{mat}_{t}"
+            st.session_state.panneaux[cle] = {
+                "nom": f"{nom_panneau(mat,t)} {mat}",
+                "materiau": mat,
+                "type": t,
+                "longueur": MATERIALS[mat]["longueur"],
+                "largeur": MATERIALS[mat]["largeur"],
+                "pieces": []
+            }
 
 # === SIDEBAR ===
-st.sidebar.title("Ajouter une pièce à un matériau")
+st.sidebar.header("Sélection panneau / barre")
+cle_choix = st.sidebar.selectbox(
+    "Panneau / Barre actif",
+    options=list(st.session_state.panneaux.keys()),
+    format_func=lambda x: st.session_state.panneaux[x]["nom"]
+)
+panneau = st.session_state.panneaux[cle_choix]
 
-# Choix matériau pour nouvelle pièce
-mat_piece = st.sidebar.selectbox("Matériau pièce", list(MATERIALS.keys()))
+nouveau_nom = st.sidebar.text_input("Nom du panneau / barre", panneau["nom"])
+if nouveau_nom.strip():
+    panneau["nom"] = nouveau_nom.strip()
 
-# Saisie pièce
-longueur_piece = st.sidebar.number_input("Longueur (mm)", min_value=1, value=200, key="long_piece")
-largeur_piece = st.sidebar.number_input("Largeur (mm)", min_value=1, value=100, key="larg_piece")
-epaisseur_piece = st.sidebar.number_input("Épaisseur (mm)", min_value=1, value=18, key="epaisseur_piece")
+st.sidebar.markdown("---")
+st.sidebar.subheader(f"Ajouter une pièce à {panneau['nom']}")
+
+longueur_defaut = 6000 if panneau["type"] == "Barre" else 200
+largeur_defaut = 100 if panneau["type"] == "Barre" else 1000
+epaisseur_defaut = 18
+
+longueur_piece = st.sidebar.number_input("Longueur (mm)", min_value=1, value=longueur_defaut)
+largeur_piece = st.sidebar.number_input("Largeur (mm)", min_value=1, value=largeur_defaut)
+epaisseur_piece = st.sidebar.number_input("Épaisseur (mm)", min_value=1, value=epaisseur_defaut)
 quantite_piece = st.sidebar.number_input("Quantité", min_value=1, value=1, step=1)
 
-if st.sidebar.button("Ajouter la/les pièces"):
+profil_piece = ""
+if panneau["materiau"] == "Métal" and panneau["type"] == "Barre":
+    profil_piece = st.sidebar.text_input("Profil (ex: 40x40x2 mm)", "40x40x2")
+
+if st.sidebar.button("Ajouter la pièce"):
     for _ in range(quantite_piece):
-        st.session_state.panneaux[mat_piece]["pieces"].append({
+        piece = {
             "longueur": longueur_piece,
             "largeur": largeur_piece,
-            "epaisseur": epaisseur_piece
-        })
+            "epaisseur": epaisseur_piece,
+            "profil": profil_piece
+        }
+        panneau["pieces"].append(piece)
+    st.sidebar.success(f"{quantite_piece} pièce(s) ajoutée(s) à {panneau['nom']}")
 
-# Choix heuristique
-heuristique = st.sidebar.selectbox(
-    "Heuristique MaxRects",
-    ["Best Short Side Fit", "Best Long Side Fit", "Best Area Fit", "Bottom-Left", "Contact Point"],
-    index=0
-)
-st.sidebar.info(afficher_explanation(heuristique))
+# === AFFICHAGE PRINCIPAL ===
+st.title(panneau["nom"])
 
-# === AFFICHAGE PRINCIPAL AVEC ONGLETS ===
-st.title("Optimisation Multi-Panneaux MaxRects")
+if not panneau["pieces"]:
+    st.info("Ajoutez des pièces pour ce panneau/barre dans le menu latéral.")
+    st.stop()
 
-tab_names = list(st.session_state.panneaux.keys())
-tabs = st.tabs(tab_names)
+st.subheader("Liste des pièces")
+for idx, piece in enumerate(panneau["pieces"]):
+    desc = f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm"
+    if "profil" in piece and piece["profil"]:
+        desc += f" (Profil: {piece['profil']})"
+    st.markdown(desc)
 
-# Pour chaque panneau/matériau, on calcule et affiche la découpe
-for idx, mat in enumerate(tab_names):
-    panneau = st.session_state.panneaux[mat]
-    with tabs[idx]:
-        st.header(f"{panneau['nom']} ({mat})")
+# === OPTIMISATION MAXRECTS ===
+st.subheader("Disposition optimisée (MaxRects)")
 
-        if not panneau["pieces"]:
-            st.info("Ajoutez des pièces pour ce panneau via la barre latérale.")
-            continue
+# Trier par surface décroissante
+pieces_sorted = sorted(panneau["pieces"], key=lambda p: p["longueur"]*p["largeur"], reverse=True)
+packer = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] if panneau["largeur"] else 1000, allow_rotate=True)
 
-        maxrects = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] or 1000)
-        placements = []
-        errors = []
+placements = []
+for piece in pieces_sorted:
+    rect = packer.insert(piece["longueur"], piece["largeur"], method='best_short_side_fit')
+    if rect is None:
+        rect = packer.insert(piece["largeur"], piece["longueur"], method='best_short_side_fit')
+    placements.append(rect)
 
-        for i, piece in enumerate(panneau["pieces"]):
-            rect, rotated = maxrects.insert(piece["longueur"], piece["largeur"], heuristique)
-            if rect is None:
-                errors.append(f"Pièce {i+1} ({piece['longueur']}x{piece['largeur']}) ne rentre pas dans le panneau.")
-            else:
-                placements.append({"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height, "rotated": rotated})
+fig = dessiner_optimisation(panneau, placements)
+st.pyplot(fig)
 
-        if errors:
-            st.error("⚠️ Certaines pièces ne rentrent pas :")
-            for err in errors:
-                st.write(f"- {err}")
+# === STATISTIQUES ===
+st.subheader("Statistiques")
+total_volume = sum(p["longueur"] * p["largeur"] * p["epaisseur"] / 1e9 for p in panneau["pieces"])
+total_poids = total_volume * MATERIALS[panneau["materiau"]]["densite"]
+st.markdown(f"**Volume total :** {total_volume:.3f} m³")
+st.markdown(f"**Poids estimé :** {total_poids:.2f} kg")
 
-        fig = dessiner_plan(panneau, placements)
-        st.pyplot(fig)
-
-        # Statistiques
-        volume_total = sum(p["longueur"] * p["largeur"] * p["epaisseur"] / 1e9 for p in panneau["pieces"])
-        poids_total = volume_total * MATERIALS[mat]["densite"]
-        st.markdown(f"**Volume total pièces :** {volume_total:.3f} m³")
-        st.markdown(f"**Poids estimé :** {poids_total:.2f} kg")
-
-# === EXPORT PDF GLOBAL ===
-def export_pdf_global():
+# === EXPORT PDF ===
+def exporter_pdf(panneau):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=14)
-    pdf.cell(0, 10, "Rapport d'optimisation Multi-Panneaux", ln=1, align="C")
-    pdf.ln(5)
+    pdf.cell(200, 10, txt=panneau["nom"], ln=1, align='C')
     pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, f"Heuristique utilisée : {heuristique}", ln=1)
-    pdf.ln(5)
 
-    for mat in tab_names:
-        panneau = st.session_state.panneaux[mat]
-        pdf.cell(0, 10, f"Panneau: {panneau['nom']} (Matériau: {mat})", ln=1)
-        if not panneau["pieces"]:
-            pdf.cell(0, 10, "Aucune pièce à découper.", ln=1)
-            pdf.ln(3)
-            continue
+    for idx, piece in enumerate(panneau["pieces"]):
+        line = f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm"
+        if "profil" in piece and piece["profil"]:
+            line += f" (Profil: {piece['profil']})"
+        pdf.cell(200, 10, txt=line, ln=1)
+    return pdf.output(dest='S').encode("latin1")
 
-        maxrects = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] or 1000)
-        placements = []
-        errors = []
-
-        for i, piece in enumerate(panneau["pieces"]):
-            rect, rotated = maxrects.insert(piece["longueur"], piece["largeur"], heuristique)
-            if rect is None:
-                errors.append(f"Pièce {i+1} ({piece['longueur']}x{piece['largeur']}) ne rentre pas.")
-            else:
-                placements.append({"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height, "rotated": rotated})
-
-        for i, piece in enumerate(panneau["pieces"]):
-            rot_text = ""
-            if i < len(placements) and placements[i]["rotated"]:
-                rot_text = " (rotated)"
-            pdf.cell(0, 10, f"{i+1}. Pièce {piece['longueur']}x{piece['largeur']}x{piece['epaisseur']} mm{rot_text}", ln=1)
-
-        if errors:
-            pdf.ln(3)
-            pdf.cell(0, 10, "⚠️ Pièces non placées :", ln=1)
-            for err in errors:
-                pdf.cell(0, 10, err, ln=1)
-        pdf.ln(5)
-
-    return pdf.output(dest="S").encode("latin1")
-
-if st.button("📄 Générer rapport PDF global"):
-    pdf_bytes = export_pdf_global()
+if st.button("📄 Générer fiche PDF"):
+    pdf_bytes = exporter_pdf(panneau)
     st.download_button(
-        label="Télécharger rapport PDF",
+        label="Télécharger PDF",
         data=pdf_bytes,
-        file_name="rapport_optimisation_multi_panneaux.pdf",
+        file_name=f"{panneau['nom'].replace(' ', '_')}.pdf",
         mime="application/pdf"
     )
-

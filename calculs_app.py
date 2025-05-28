@@ -3,176 +3,185 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from io import BytesIO
 from fpdf import FPDF
+from PIL import Image
 
 # === CONFIGURATION INITIALE ===
 st.set_page_config(page_title="Optimisation Découpe", layout="wide")
+
+# === LOGO ===
 st.image("logo.gif", width=150)
 
 # === CONSTANTES ===
 MATERIALS = {
     "Bois": {"longueur": 2440, "largeur": 1220, "densite": 600},
-    "Métal": {"longueur": 6000, "largeur": None, "densite": 7850}
+    "Métal": {"longueur": 6000, "largeur": 1250, "densite": 7850}  # largeur fixée à 1250 par défaut pour métal
 }
 
-# === FONCTIONS ===
-def nom_panneau(mat, type_piece):
-    mat_clean = mat.capitalize()
-    if mat == "Bois":
-        return "Panneaux Bois" if type_piece == "Panneau" else "Tasseaux Bois"
-    else:
-        return "Tôles Métal" if type_piece == "Panneau" else "Barres Métal"
+# === CLASSES & ALGORITHME MAXRECTS SIMPLIFIE (exemple, à intégrer complet selon besoins) ===
+class Rect:
+    def __init__(self, x, y, width, height):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
 
-def format_dimension_label(val):
-    # Label tous les 500mm avec taille 12
-    return f"{int(val)} mm"
+class MaxRectsBinPack:
+    def __init__(self, width, height):
+        self.bin_width = width
+        self.bin_height = height
+        self.free_rects = [Rect(0, 0, width, height)]
+        self.used_rects = []
 
-def dessiner_pieces_2d(panneau):
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.set_xlim(0, panneau["longueur"])
-    largeur = panneau["largeur"] if panneau["largeur"] else 1000  # Si None on fixe une largeur arbitraire
+    def insert(self, width, height):
+        # Simplification: place first fit without rotation (pour exemple)
+        for i, freerect in enumerate(self.free_rects):
+            if width <= freerect.width and height <= freerect.height:
+                rect = Rect(freerect.x, freerect.y, width, height)
+                self.used_rects.append(rect)
+                # Mise à jour free rects: simplifié ici, à améliorer selon vrai algorithme
+                # Suppression free rect et découpage
+                self.free_rects.pop(i)
+                # Ajouter des nouveaux free rects après découpe (non implémenté ici)
+                return rect, False
+            if height <= freerect.width and width <= freerect.height:
+                rect = Rect(freerect.x, freerect.y, height, width)
+                self.used_rects.append(rect)
+                self.free_rects.pop(i)
+                return rect, True  # rotation
+        return None, False
+
+# === INITIALISATION ÉTAT ===
+if "panneaux" not in st.session_state:
+    st.session_state.panneaux = {
+        mat: {
+            "nom": f"Panneau {mat.capitalize()}",
+            "longueur": MATERIALS[mat]["longueur"],
+            "largeur": MATERIALS[mat]["largeur"],
+            "pieces": []
+        }
+        for mat in MATERIALS.keys()
+    }
+
+# === SIDEBAR POUR AJOUT & PARAMÈTRES ===
+st.sidebar.header("Ajouter une pièce")
+mat_choice = st.sidebar.selectbox("Matériau panneau", list(MATERIALS.keys()))
+
+panneau = st.session_state.panneaux[mat_choice]
+
+long_p = st.sidebar.number_input("Longueur panneau (mm)", min_value=1, value=panneau["longueur"])
+larg_p = st.sidebar.number_input("Largeur panneau (mm)", min_value=1, value=panneau["largeur"] or 1000)
+
+panneau["longueur"] = long_p
+panneau["largeur"] = larg_p
+
+long_piece = st.sidebar.number_input("Longueur pièce (mm)", min_value=1, value=200)
+larg_piece = st.sidebar.number_input("Largeur pièce (mm)", min_value=1, value=100)
+epaisseur_piece = st.sidebar.number_input("Épaisseur pièce (mm)", min_value=1, value=18)
+quantite_piece = st.sidebar.number_input("Quantité", min_value=1, value=1)
+
+profil = ""
+if mat_choice == "Métal":
+    profil = st.sidebar.text_input("Profil (ex: 40x40x2 mm)", "40x40x2")
+
+if st.sidebar.button("Ajouter la pièce"):
+    for _ in range(quantite_piece):
+        panneau["pieces"].append({
+            "longueur": long_piece,
+            "largeur": larg_piece,
+            "epaisseur": epaisseur_piece,
+            "profil": profil
+        })
+
+# === AFFICHAGE PRINCIPAL ===
+st.title("Optimisation Multi-Panneaux")
+
+tabs = st.tabs(list(st.session_state.panneaux.keys()))
+
+def dessiner_plan(panneau, placement):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    longueur = panneau["longueur"]
+    largeur = panneau["largeur"] or 1000
+    ax.set_xlim(0, longueur)
     ax.set_ylim(0, largeur)
     ax.set_aspect('equal')
     ax.invert_yaxis()
 
-    # Ajout des graduations tous les 500mm en police 12
-    step = 500
-    xticks = range(0, panneau["longueur"]+step, step)
-    yticks = range(0, largeur+step, step)
-    ax.set_xticks(xticks)
-    ax.set_yticks(yticks)
+    ax.set_title(f"Disposition {panneau['nom']}", fontsize=14)
+
+    # Graduations tous les 500 mm, police 12
+    ax.set_xticks(range(0, longueur + 1, 500))
+    ax.set_yticks(range(0, largeur + 1, 500))
     ax.tick_params(axis='both', labelsize=12)
 
-    # Placement simple en ligne (à remplacer par algo d'optimisation avancé)
-    x, y = 0, 0
-    max_height_line = 0
-    for idx, piece in enumerate(panneau["pieces"]):
-        l, L = piece["longueur"], piece["largeur"]
-        # Rotation automatique si ça rentre mieux
-        if l > L and l > panneau["longueur"] and L <= panneau["longueur"]:
-            l, L = L, l  # Rotation simple
+    ax.set_xlabel("mm", fontsize=12)
+    ax.set_ylabel("mm", fontsize=12)
 
-        if x + l > panneau["longueur"]:
-            x = 0
-            y += max_height_line
-            max_height_line = 0
-        if y + L > largeur:
-            # Plus de place - ne pas afficher
-            break
-        ax.add_patch(patches.Rectangle((x, y), l, L, facecolor='lightblue', edgecolor='black'))
-        ax.text(x + l / 2, y + L / 2, f"{idx+1}", ha='center', va='center', fontsize=10)
-        x += l
-        if L > max_height_line:
-            max_height_line = L
+    for i, rect in enumerate(placement):
+        x, y, w, h = rect["x"], rect["y"], rect["width"], rect["height"]
+        ax.add_patch(patches.Rectangle((x, y), w, h, edgecolor='black', facecolor='lightblue'))
+        ax.text(x + w / 2, y + h / 2, f"{i+1}", ha='center', va='center', fontsize=8)
 
-    ax.set_xlabel("Longueur (mm)", fontsize=14)
-    ax.set_ylabel("Largeur (mm)", fontsize=14)
     return fig
 
+for idx, mat in enumerate(st.session_state.panneaux.keys()):
+    with tabs[idx]:
+        panneau = st.session_state.panneaux[mat]
+        st.header(panneau["nom"])
+
+        if not panneau["pieces"]:
+            st.info("Ajoutez des pièces via la barre latérale.")
+            continue
+
+        maxrects = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] or 1000)
+        placements = []
+        erreurs = []
+
+        for i, piece in enumerate(panneau["pieces"]):
+            rect, rotated = maxrects.insert(piece["longueur"], piece["largeur"])
+            if rect is None:
+                erreurs.append(f"Pièce {i+1} ({piece['longueur']}x{piece['largeur']}) ne rentre pas.")
+            else:
+                placements.append({
+                    "x": rect.x,
+                    "y": rect.y,
+                    "width": rect.width,
+                    "height": rect.height,
+                    "rotated": rotated
+                })
+
+        if erreurs:
+            st.error("⚠️ Certaines pièces ne rentrent pas dans le panneau:")
+            for err in erreurs:
+                st.write(f"- {err}")
+
+        fig = dessiner_plan(panneau, placements)
+        st.pyplot(fig)
+
+        # Statistiques
+        vol_total = sum(p["longueur"] * p["largeur"] * p["epaisseur"] / 1e9 for p in panneau["pieces"])
+        poids_total = vol_total * MATERIALS[mat]["densite"]
+        st.markdown(f"**Volume total pièces :** {vol_total:.3f} m³")
+        st.markdown(f"**Poids estimé :** {poids_total:.2f} kg")
+
+# === EXPORT PDF ===
 def export_pdf(panneau):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=14)
+    pdf.set_font("Arial", size=12)
     pdf.cell(200, 10, txt=panneau["nom"], ln=1, align='C')
 
-    pdf.set_font("Arial", size=12)
     for idx, piece in enumerate(panneau["pieces"]):
-        line = f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm"
-        if "profil" in piece and piece["profil"]:
-            line += f" (Profil: {piece['profil']})"
-        pdf.cell(200, 10, txt=line, ln=1)
+        pdf.cell(200, 10, txt=f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm", ln=1)
+
     return pdf.output(dest='S').encode("latin1")
 
-# === INITIALISATION SESSION STATE ===
-if "panneaux" not in st.session_state:
-    st.session_state.panneaux = {}
-    # Création de toutes les combinaisons (matériaux x types)
-    for mat in MATERIALS.keys():
-        for t in ["Panneau", "Barre"]:
-            cle = f"{mat}_{t}"
-            st.session_state.panneaux[cle] = {
-                "nom": nom_panneau(mat, t),
-                "materiau": mat,
-                "type": t,
-                "longueur": MATERIALS[mat]["longueur"],
-                "largeur": MATERIALS[mat]["largeur"],
-                "pieces": []
-            }
+for mat in st.session_state.panneaux.keys():
+    if st.button(f"📄 Générer fiche PDF {mat}"):
+        pdf_bytes = export_pdf(st.session_state.panneaux[mat])
+        st.download_button(
+            label=f"Télécharger PDF {mat}",
+            data=pdf_bytes,
+            file_name=f"{st.session_state.panneaux[mat]['nom'].replace(' ', '_')}.pdf",
+            mime="application/pdf"
+        )
 
-# === SIDEBAR : CHOIX PANNEAU/BARRE ACTIF ===
-st.sidebar.header("Sélection panneau / barre")
-cle_choix = st.sidebar.selectbox(
-    "Panneau / Barre actif",
-    options=list(st.session_state.panneaux.keys()),
-    format_func=lambda x: st.session_state.panneaux[x]["nom"]
-)
-panneau = st.session_state.panneaux[cle_choix]
-
-# === MODIF NOM PANNEAU ===
-nouveau_nom = st.sidebar.text_input("Nom du panneau / barre", panneau["nom"])
-if nouveau_nom.strip():
-    panneau["nom"] = nouveau_nom.strip()
-
-# === AJOUT DE PIÈCE ===
-st.sidebar.markdown("---")
-st.sidebar.subheader(f"Ajouter une pièce à {panneau['nom']}")
-
-longueur_defaut = 6000 if panneau["type"] == "Barre" else 200
-largeur_defaut = 100 if panneau["type"] == "Barre" else 1000
-epaisseur_defaut = 18
-
-longueur_piece = st.sidebar.number_input("Longueur (mm)", min_value=1, value=longueur_defaut)
-largeur_piece = st.sidebar.number_input("Largeur (mm)", min_value=1, value=largeur_defaut)
-epaisseur_piece = st.sidebar.number_input("Épaisseur (mm)", min_value=1, value=epaisseur_defaut)
-quantite_piece = st.sidebar.number_input("Quantité", min_value=1, value=1, step=1)
-
-profil_piece = ""
-if panneau["materiau"] == "Métal" and panneau["type"] == "Barre":
-    profil_piece = st.sidebar.text_input("Profil (ex: 40x40x2 mm)", "40x40x2")
-
-if st.sidebar.button("Ajouter la pièce"):
-    for _ in range(quantite_piece):
-        piece = {
-            "longueur": longueur_piece,
-            "largeur": largeur_piece,
-            "epaisseur": epaisseur_piece,
-            "profil": profil_piece
-        }
-        panneau["pieces"].append(piece)
-    st.sidebar.success(f"{quantite_piece} pièce(s) ajoutée(s) à {panneau['nom']}")
-
-# === AFFICHAGE PRINCIPAL ===
-st.title(panneau["nom"])
-
-if not panneau["pieces"]:
-    st.info("Ajoutez des pièces pour ce panneau/barre dans le menu latéral.")
-    st.stop()
-
-# === LISTE DES PIÈCES ===
-st.subheader("Liste des pièces")
-for idx, piece in enumerate(panneau["pieces"]):
-    desc = f"{idx+1}. {piece['longueur']} x {piece['largeur']} x {piece['epaisseur']} mm"
-    if "profil" in piece and piece["profil"]:
-        desc += f" (Profil: {piece['profil']})"
-    st.markdown(desc)
-
-# === VISUALISATION 2D ===
-st.subheader("Visualisation 2D")
-fig = dessiner_pieces_2d(panneau)
-st.pyplot(fig)
-
-# === STATISTIQUES ===
-st.subheader("Statistiques")
-total_volume = sum(p["longueur"] * p["largeur"] * p["epaisseur"] / 1e9 for p in panneau["pieces"])
-total_poids = total_volume * MATERIALS[panneau["materiau"]]["densite"]
-st.markdown(f"**Volume total :** {total_volume:.3f} m³")
-st.markdown(f"**Poids estimé :** {total_poids:.2f} kg")
-
-# === EXPORT PDF ===
-if st.button("📄 Générer fiche PDF"):
-    pdf_bytes = export_pdf(panneau)
-    st.download_button(
-        label="Télécharger PDF",
-        data=pdf_bytes,
-        file_name=f"{panneau['nom'].replace(' ', '_')}.pdf",
-        mime="application/pdf"
-    )

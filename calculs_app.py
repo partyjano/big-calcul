@@ -1,149 +1,167 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from io import BytesIO
+from fpdf import FPDF
+import base64
 
-DEFAULT_PANEL_LENGTH = 2440  # en mm
-DEFAULT_PANEL_WIDTH = 1220   # en mm
-DEFAULT_METAL_LENGTH = 6000  # en mm
-
-MATERIAL_DENSITIES = {
-    "Bois": 600,    # kg/m³
-    "Métal": 7850
+# === CONFIGURATION ===
+DEFAULTS = {
+    "Bois": {"longueur": 2440, "largeur": 1220},
+    "Métal": {"longueur": 6000, "largeur": 0}
 }
+MATERIAL_DENSITIES = {"Bois": 600, "Métal": 7850}  # en kg/m³
 
-st.set_page_config(page_title="Optimisation de découpe", layout="wide")
+st.set_page_config(page_title="Optimisation découpe", layout="wide")
 
-st.title("Optimisation de découpe de panneaux bois et métaux")
+# === LOGO ===
+st.image("https://raw.githubusercontent.com/ton-repo/logo/main/logo.gif", width=150)
 
-with st.sidebar:
-    mat_principal = st.selectbox("Choisir le matériau principal", options=["Bois", "Métal"])
+st.title("Optimisation de découpe multi-matériaux")
 
-    if mat_principal == "Bois":
-        panel_length = st.number_input("Longueur panneau (mm)", value=DEFAULT_PANEL_LENGTH, min_value=10)
-        panel_width = st.number_input("Largeur panneau (mm)", value=DEFAULT_PANEL_WIDTH, min_value=10)
-        panel_thickness = st.number_input("Épaisseur panneau (mm)", value=18.0, min_value=1.0)
+# === Initialisation session state ===
+if "panneaux" not in st.session_state:
+    st.session_state.panneaux = {}
+    st.session_state.panneau_actif = None
 
-    else:
-        bar_length = st.number_input("Longueur barre métal (mm)", value=DEFAULT_METAL_LENGTH, min_value=10)
-        ref_bar = st.text_input("Référence barre (ex: 40x40x2mm)", value="40x40x2mm")
+# === Sélection ou création panneau ===
+st.sidebar.header("🔧 Gestion des panneaux")
+nom_panneau = st.sidebar.text_input("Nom du panneau", value="Panneau 1")
+if st.sidebar.button("Créer/Activer"):
+    if nom_panneau not in st.session_state.panneaux:
+        st.session_state.panneaux[nom_panneau] = {
+            "mat": "Bois",
+            "longueur": DEFAULTS["Bois"]["longueur"],
+            "largeur": DEFAULTS["Bois"]["largeur"],
+            "pieces": [],
+            "ep_lame": 3
+        }
+    st.session_state.panneau_actif = nom_panneau
 
-    with st.expander("Options avancées"):
-        kerf = st.number_input("Épaisseur de la lame (découpe) en mm", value=3.0, min_value=0.1, max_value=10.0, step=0.1)
-        # Ici on pourrait ajouter d'autres options avancées 3D si besoin
+# Liste panneaux
+for nom in st.session_state.panneaux:
+    if st.sidebar.button(f"🧱 {nom}"):
+        st.session_state.panneau_actif = nom
 
-    st.header("Ajouter une pièce")
-    longueur = st.number_input("Longueur pièce (mm)", min_value=1, value=200)
-    largeur = st.number_input("Largeur pièce (mm)", min_value=1, value=100)
-    epaisseur = st.number_input("Épaisseur pièce (mm)", min_value=1.0, value=18.0)
-    matiere = st.selectbox("Matériau pièce", options=list(MATERIAL_DENSITIES.keys()))
-    quantite = st.number_input("Quantité", min_value=1, value=1, step=1)
-
-    if "pieces" not in st.session_state:
-        st.session_state.pieces = []
-
-    if st.button("Ajouter la pièce"):
-        for _ in range(quantite):
-            st.session_state.pieces.append((longueur, largeur, epaisseur, matiere))
-
-if not st.session_state.pieces:
-    st.info("Ajoutez des pièces pour commencer.")
+if st.session_state.panneau_actif is None:
+    st.warning("Créez un panneau pour commencer.")
     st.stop()
 
-# Conversion en mètre pour calculs de poids
-def mm_to_m(x): return x / 1000
+panneau = st.session_state.panneaux[st.session_state.panneau_actif]
+st.sidebar.markdown(f"**Actif:** `{st.session_state.panneau_actif}`")
 
-pieces = [(l, L, e, m) for l, L, e, m in st.session_state.pieces]
+# === Paramètres panneau ===
+st.sidebar.divider()
+st.sidebar.subheader("Paramètres panneau")
+mat = st.sidebar.selectbox("Matériau", ["Bois", "Métal"], index=["Bois", "Métal"].index(panneau["mat"]))
+longueur = st.sidebar.number_input("Longueur (mm)", value=panneau["longueur"], step=10)
+largeur = st.sidebar.number_input("Largeur (mm)", value=panneau["largeur"], step=10, disabled=(mat == "Métal"))
+ep_lame = st.sidebar.number_input("Épaisseur de lame (mm)", value=panneau["ep_lame"], step=1)
+panneau.update({"mat": mat, "longueur": longueur, "largeur": largeur, "ep_lame": ep_lame})
 
-# Algorithme simplifié de placement (sans kerf ni nesting complexe ici)
-def try_place_piece(espace, l, L):
-    best = None
+# === Ajout pièce ===
+st.sidebar.divider()
+st.sidebar.subheader("Ajouter une pièce")
+l = st.sidebar.number_input("Longueur pièce (mm)", min_value=10)
+L = st.sidebar.number_input("Largeur pièce (mm)", min_value=0, value=100 if mat == "Bois" else 0, disabled=(mat == "Métal"))
+ep = st.sidebar.number_input("Épaisseur (mm)", min_value=1.0, value=18.0)
+profil = st.sidebar.text_input("Profil métal (ex: 40x40x2)", disabled=(mat != "Métal"))
+qte = st.sidebar.number_input("Quantité", value=1, min_value=1, step=1)
+
+if st.sidebar.button("Ajouter pièce"):
+    for _ in range(qte):
+        panneau["pieces"].append((l, L, ep, profil))
+
+if not panneau["pieces"]:
+    st.info("Ajoutez des pièces pour voir la découpe.")
+    st.stop()
+
+# === Découpe ===
+
+# Découpe métal (1D)
+def decoupe_barres(pieces, longueur_barre, ep_lame):
+    barres = []
+    for l, *_ in sorted(pieces, reverse=True):
+        place = False
+        for barre in barres:
+            if sum(barre) + l + ep_lame <= longueur_barre:
+                barre.append(l + ep_lame)
+                place = True
+                break
+        if not place:
+            barres.append([l + ep_lame])
+    return barres
+
+# Découpe bois (2D)
+def try_place(espace, l, L):
     for i, (x, y, w, h) in enumerate(espace):
-        for rl, rL, rot in [(l, L, False), (L, l, True)]:
-            if rl <= w and rL <= h:
-                reste = (w - rl) * h + (h - rL) * w
-                if best is None or reste < best[0]:
-                    best = (reste, i, x, y, rl, rL, rot)
-    return best
+        if l <= w and L <= h:
+            return i, x, y
+    return None
 
-def place_pieces(pieces):
+def place_2D(pieces, W, H, ep_lame):
     panneaux = []
-    for l, L, _, _ in sorted(pieces, key=lambda x: max(x[0], x[1]), reverse=True):
+    for l, L, *_ in sorted(pieces, key=lambda x: max(x[0], x[1]), reverse=True):
         placed = False
         for panneau in panneaux:
-            idx = try_place_piece(panneau['espace'], l, L)
+            espace = panneau["espace"]
+            idx = try_place(espace, l, L)
             if idx:
-                _, i, x, y, rl, rL, rot = idx
-                del panneau['espace'][i]
-                panneau['placements'].append((x, y, rl, rL, rot))
-                panneau['espace'].append((x + rl, y, panel_length - (x + rl), rL))
-                panneau['espace'].append((x, y + rL, rl, panel_width - (y + rL)))
+                i, x, y = idx
+                panneau["placements"].append((x, y, l, L))
+                del espace[i]
+                espace.append((x + l + ep_lame, y, W - (x + l + ep_lame), L))
+                espace.append((x, y + L + ep_lame, l, H - (y + L + ep_lame)))
                 placed = True
                 break
         if not placed:
-            new = {
-                'espace': [(0, 0, panel_length, panel_width)],
-                'placements': []
-            }
-            idx = try_place_piece(new['espace'], l, L)
+            new = {"espace": [(0, 0, W, H)], "placements": []}
+            idx = try_place(new["espace"], l, L)
             if idx:
-                _, i, x, y, rl, rL, rot = idx
-                new['placements'].append((x, y, rl, rL, rot))
-                new['espace'] = [
-                    (x + rl, y, panel_length - (x + rl), rL),
-                    (x, y + rL, rl, panel_width - (y + rL))
+                i, x, y = idx
+                new["placements"].append((x, y, l, L))
+                new["espace"] = [
+                    (x + l + ep_lame, y, W - (x + l + ep_lame), L),
+                    (x, y + L + ep_lame, l, H - (y + L + ep_lame))
                 ]
                 panneaux.append(new)
     return panneaux
 
-panneaux = place_pieces(pieces)
+# === Affichage graphique ===
+st.subheader("Aperçu découpes")
+if panneau["mat"] == "Bois":
+    results = place_2D([(l, L, ep, p) for l, L, ep, p in panneau["pieces"]], panneau["longueur"], panneau["largeur"], panneau["ep_lame"])
+    for idx, pan in enumerate(results):
+        fig, ax = plt.subplots()
+        ax.set_xlim(0, panneau["longueur"])
+        ax.set_ylim(0, panneau["largeur"])
+        ax.set_aspect('equal')
+        ax.invert_yaxis()
+        ax.set_title(f"Panneau #{idx+1}")
+        for i, (x, y, l, L) in enumerate(pan["placements"]):
+            rect = patches.Rectangle((x, y), l, L, edgecolor='black', facecolor='skyblue')
+            ax.add_patch(rect)
+            ax.text(x + l/2, y + L/2, f"{i+1}", ha='center', va='center', fontsize=8)
+        st.pyplot(fig)
+else:
+    barres = decoupe_barres([(l, 0, ep, p) for l, _, ep, p in panneau["pieces"]], panneau["longueur"], panneau["ep_lame"])
+    for i, barre in enumerate(barres):
+        fig, ax = plt.subplots(figsize=(8, 1))
+        pos = 0
+        for j, l in enumerate(barre):
+            ax.add_patch(patches.Rectangle((pos, 0), l - panneau["ep_lame"], 10, edgecolor='black', facecolor='lightcoral'))
+            ax.text(pos + (l - panneau["ep_lame"]) / 2, 5, f"{j+1}", ha='center', va='center')
+            pos += l
+        ax.set_xlim(0, panneau["longueur"])
+        ax.axis('off')
+        st.pyplot(fig)
 
-# Ajout d'une clé 'couches' vide pour chaque panneau (exemple placeholder)
-for panneau in panneaux:
-    panneau['couches'] = [{'placements': [(x, y, l, L, rot, 0) for (x, y, l, L, rot) in panneau['placements']], 'hauteur_cumulee': 0}]
-
-# Affichage graphique avec gestion sécurisée du slider
-for p_idx, panneau in enumerate(panneaux):
-    st.subheader(f"Panneau #{p_idx+1}")
-    if len(panneau['couches']) == 0:
-        st.warning("Aucune couche disponible pour ce panneau.")
-        continue
-
-    couche_idx = st.slider(
-        f"Choisir la couche à afficher (panneau #{p_idx+1})",
-        0, len(panneau['couches']) - 1, 0
-    )
-    couche = panneau['couches'][couche_idx]
-
-    fig, ax = plt.subplots()
-    ax.set_title(f"Panneau #{p_idx+1} - Couche {couche_idx+1} (Hauteur cumulée: {couche['hauteur_cumulee']} mm)")
-    ax.set_xlim(0, panel_length)
-    ax.set_ylim(0, panel_width if mat_principal=="Bois" else 50)
-    ax.set_aspect('equal')
-    ax.invert_yaxis()
-
-    for i, (x, y, l, L, rot, z) in enumerate(couche['placements']):
-        rect = patches.Rectangle((x, y), l, L, edgecolor='black', facecolor='lightblue')
-        ax.add_patch(rect)
-        ax.text(x + l/2, y + L/2, f"{i+1}", ha='center', va='center', fontsize=7)
-
-    st.pyplot(fig)
-
-# Statistiques
+# === Statistiques ===
 st.subheader("Statistiques")
-total_piece_area = sum(l * L for l, L, _, _ in st.session_state.pieces)
-total_panel_area = len(panneaux) * panel_length * panel_width
-perte = total_panel_area - total_piece_area
-perte_pct = 100 * perte / total_panel_area if total_panel_area else 0
-st.markdown(f"**Utilisation :** {100 - perte_pct:.2f}%")
-st.markdown(f"**Perte :** {perte_pct:.2f}%")
-
-# Poids et volume par matériau
-stats = {}
-for l, L, e, mat in st.session_state.pieces:
-    volume = mm_to_m(l) * mm_to_m(L) * mm_to_m(e)
-    stats.setdefault(mat, 0)
-    stats[mat] += volume
-
-for mat, vol in stats.items():
-    poids = vol * MATERIAL_DENSITIES.get(mat, 0)
-    st.markdown(f"**{mat}** - Volume: {vol:.4f} m³ | Poids estimé: {poids:.1f} kg")
+total_volume = 0
+for l, L, e, _ in panneau["pieces"]:
+    v = l * (L if panneau["mat"] == "Bois" else 1) * e / 1_000_000  # mm³ → m³
+    total_volume += v
+poids = total_volume * MATERIAL_DENSITIES[panneau["mat"]]
+st.markdown(f"**Volume total :** {total_volume:.3f} m³")
+st.markdown(f"**Poids estimé :** {poids:.1f} kg")

@@ -79,66 +79,62 @@ st.subheader("Liste des pièces")
 for idx, piece in enumerate(panneau["pieces"]):
     st.markdown(f"{idx+1}. {piece['longueur']}x{piece['largeur']}x{piece['epaisseur']} mm")
 
-# === OPTIMISATION MULTI-PANNEAUX MAXRECTS ===
-def optimiser_maxrects_multi(panneau):
+# === OPTIMISATION MAXRECTS (AMÉLIORÉE) ===
+def optimiser_maxrects(panneau):
     algos = [MaxRectsBssf, MaxRectsBlsf, MaxRectsBaf]
-    best_algo_result = None
-    best_total_fill = 0
-    best_algo_name = None
+    best_result = None
+    best_fill = 0
 
     for algo in algos:
         packer = newPacker(rotation=True, pack_algo=algo, bin_algo=PackingMode.Offline)
         for idx, p in enumerate(panneau["pieces"]):
             packer.add_rect(p["longueur"], p["largeur"], idx)
-        for _ in range(20):
-            packer.add_bin(panneau["longueur"], panneau["largeur"])  # Up to 20 bins
+        packer.add_bin(panneau["longueur"], panneau["largeur"], count=10)
         packer.pack()
 
-        total_area = len(packer.bin_list()) * panneau["longueur"] * panneau["largeur"]
         used_area = sum(w * h for x, y, w, h, _, _ in packer.rect_list())
+        total_area = panneau["longueur"] * panneau["largeur"]
         fill_ratio = used_area / total_area
 
-        if fill_ratio > best_total_fill:
-            best_total_fill = fill_ratio
-            best_algo_result = (list(packer.rect_list()), packer.bin_list())
-            best_algo_name = algo.__name__
+        if fill_ratio > best_fill:
+            best_fill = fill_ratio
+            best_result = list(packer.rect_list())
 
-    rects, bins = best_algo_result
-    bin_placements = [[] for _ in bins]
-    for x, y, w, h, bid, rid in rects:
-        bin_placements[bid].append((x, y, w, h, rid))
+    placements = [None] * len(panneau["pieces"])
+    for x, y, w, h, _, rid in best_result:
+        placements[rid] = (x, y, w, h)
+    return placements
 
-    return bin_placements
+# === VISUALISATION OPTIMISÉE ===
+st.subheader("Disposition optimisée (MaxRects)")
+positions = optimiser_maxrects(panneau)
 
-# === VISUALISATION OPTIMISÉE MULTI-PANNEAUX ===
-st.subheader("Disposition optimisée sur plusieurs panneaux")
-placements_multi = optimiser_maxrects_multi(panneau)
+fig, ax = plt.subplots()
+ax.set_xlim(0, panneau["longueur"])
+ax.set_ylim(0, panneau["largeur"])
+ax.set_aspect('equal')
+ax.invert_yaxis()
 
-for idx, placement in enumerate(placements_multi):
-    st.markdown(f"### Panneau {idx + 1}")
-    fig, ax = plt.subplots()
-    ax.set_xlim(0, panneau["longueur"])
-    ax.set_ylim(0, panneau["largeur"])
-    ax.set_aspect('equal')
-    ax.invert_yaxis()
-    for x, y, w, h, rid in placement:
-        ax.add_patch(patches.Rectangle((x, y), w, h, facecolor='lightgreen', edgecolor='black'))
-        ax.text(x + w / 2, y + h / 2, f"{rid + 1}", ha='center', va='center')
-    st.pyplot(fig)
+for idx, pos in enumerate(positions):
+    if pos is None:
+        continue
+    x, y, w, h = pos
+    ax.add_patch(patches.Rectangle((x, y), w, h, facecolor='lightgreen', edgecolor='black'))
+    ax.text(x + w / 2, y + h / 2, f"{idx+1}", ha='center', va='center')
+
+st.pyplot(fig)
 
 # === STATISTIQUES ===
 st.subheader("Statistiques")
 total_volume = sum(p["longueur"] * p["largeur"] * p["epaisseur"] / 1e9 for p in panneau["pieces"])
 total_poids = total_volume * MATERIALS[materiau]["densite"]
-nb_panneaux = len(placements_multi)
-total_surface = nb_panneaux * panneau["longueur"] * panneau["largeur"]
+total_surface = panneau["longueur"] * panneau["largeur"]
 used_surface = sum(p["longueur"] * p["largeur"] for p in panneau["pieces"])
 rendement = (used_surface / total_surface) * 100
 
-st.markdown(f"**Nombre de panneaux utilisés :** {nb_panneaux}")
 st.markdown(f"**Volume total :** {total_volume:.3f} m³")
 st.markdown(f"**Poids estimé :** {total_poids:.2f} kg")
-st.markdown(f"**Taux d'occupation global :** {rendement:.2f} %")
+st.markdown(f"**Taux d'occupation :** {rendement:.2f} %")
 
 # === EXPORT PDF ===
 def export_pdf():

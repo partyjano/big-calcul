@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from fpdf import FPDF
 
-# === CONFIGURATION INITIALE ===
-st.set_page_config(page_title="Optimisation Découpe MaxRects", layout="wide")
+# === CONFIG INIT ===
+st.set_page_config(page_title="Optimisation Multi-Panneaux MaxRects", layout="wide")
 
 # === CONSTANTES MATÉRIAUX ===
 MATERIALS = {
@@ -12,7 +12,7 @@ MATERIALS = {
     "Métal": {"longueur": 6000, "largeur": None, "densite": 7850}
 }
 
-# === MAXRECTS ALGO + HEURISTIQUES ===
+# === MAXRECTS ALGO (comme avant) ===
 class Rect:
     def __init__(self, x, y, width, height):
         self.x = x
@@ -30,7 +30,6 @@ class MaxRectsBinPack:
     def insert(self, width, height, method):
         score1 = float('inf')
         score2 = float('inf')
-        newNode = Rect(0, 0, 0, 0)
         bestShortSideFit = float('inf')
         bestLongSideFit = float('inf')
         bestAreaFit = float('inf')
@@ -38,14 +37,12 @@ class MaxRectsBinPack:
         rotated = False
 
         for rect in self.free_rectangles:
-            # Try to place without rotation
             if rect.width >= width and rect.height >= height:
                 leftover_h = abs(rect.height - height)
                 leftover_w = abs(rect.width - width)
                 shortSideFit = min(leftover_h, leftover_w)
                 longSideFit = max(leftover_h, leftover_w)
                 areaFit = rect.width * rect.height - width * height
-
                 if self._check_score(method, shortSideFit, longSideFit, areaFit, bestShortSideFit, bestLongSideFit, bestAreaFit):
                     bestNode = Rect(rect.x, rect.y, width, height)
                     bestShortSideFit = shortSideFit
@@ -53,14 +50,12 @@ class MaxRectsBinPack:
                     bestAreaFit = areaFit
                     rotated = False
 
-            # Try to place with rotation
             if rect.width >= height and rect.height >= width:
                 leftover_h = abs(rect.height - width)
                 leftover_w = abs(rect.width - height)
                 shortSideFit = min(leftover_h, leftover_w)
                 longSideFit = max(leftover_h, leftover_w)
                 areaFit = rect.width * rect.height - height * width
-
                 if self._check_score(method, shortSideFit, longSideFit, areaFit, bestShortSideFit, bestLongSideFit, bestAreaFit):
                     bestNode = Rect(rect.x, rect.y, height, width)
                     bestShortSideFit = shortSideFit
@@ -82,20 +77,16 @@ class MaxRectsBinPack:
         elif method == "Best Area Fit":
             return areaFit < bestAreaFit or (areaFit == bestAreaFit and shortSideFit < bestShortSideFit)
         elif method == "Bottom-Left":
-            # For BL, just accept the first fitting position (handled by insert order)
             return areaFit < bestAreaFit
         elif method == "Contact Point":
-            # Not implemented detailed contact point heuristic here for simplicity
             return shortSideFit < bestShortSideFit or (shortSideFit == bestShortSideFit and longSideFit < bestLongSideFit)
         return False
 
     def _place_rect(self, node):
-        num_free_rectangles = len(self.free_rectangles)
         i = 0
-        while i < num_free_rectangles:
+        while i < len(self.free_rectangles):
             if self._split_free_node(self.free_rectangles[i], node):
                 self.free_rectangles.pop(i)
-                num_free_rectangles -= 1
                 i -= 1
             i += 1
         self._prune_free_list()
@@ -107,21 +98,17 @@ class MaxRectsBinPack:
             return False
 
         if usedNode.x < freeNode.x + freeNode.width and usedNode.x + usedNode.width > freeNode.x:
-            # Bottom free rectangle
             if usedNode.y > freeNode.y and usedNode.y < freeNode.y + freeNode.height:
                 newNode = Rect(freeNode.x, freeNode.y, freeNode.width, usedNode.y - freeNode.y)
                 self.free_rectangles.append(newNode)
-            # Top free rectangle
             if usedNode.y + usedNode.height < freeNode.y + freeNode.height:
                 newNode = Rect(freeNode.x, usedNode.y + usedNode.height, freeNode.width, freeNode.y + freeNode.height - (usedNode.y + usedNode.height))
                 self.free_rectangles.append(newNode)
 
         if usedNode.y < freeNode.y + freeNode.height and usedNode.y + usedNode.height > freeNode.y:
-            # Left free rectangle
             if usedNode.x > freeNode.x and usedNode.x < freeNode.x + freeNode.width:
                 newNode = Rect(freeNode.x, freeNode.y, usedNode.x - freeNode.x, freeNode.height)
                 self.free_rectangles.append(newNode)
-            # Right free rectangle
             if usedNode.x + usedNode.width < freeNode.x + freeNode.width:
                 newNode = Rect(usedNode.x + usedNode.width, freeNode.y, freeNode.x + freeNode.width - (usedNode.x + usedNode.width), freeNode.height)
                 self.free_rectangles.append(newNode)
@@ -146,7 +133,8 @@ class MaxRectsBinPack:
     def _is_contained_in(self, a, b):
         return a.x >= b.x and a.y >= b.y and a.x + a.width <= b.x + b.width and a.y + a.height <= b.y + b.height
 
-# === FONCTIONS UTILITAIRES ===
+
+# === UTILITAIRES ===
 def afficher_explanation(heuristique):
     explanations = {
         "Best Short Side Fit": "Minimise la différence sur le plus petit côté entre pièce et espace restant.",
@@ -160,19 +148,12 @@ def afficher_explanation(heuristique):
 def dessiner_plan(panneau, placement):
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.set_xlim(0, panneau["longueur"])
-    ax.set_ylim(0, panneau["largeur"] or 1000)  # par sécurité si None largeur métal
+    ax.set_ylim(0, panneau["largeur"] or 1000)
     ax.set_aspect('equal')
     ax.invert_yaxis()
-    ax.set_title(f"Disposition panneaux {panneau['nom']}")
+    ax.set_title(f"Disposition panneau {panneau['nom']}")
     ax.set_xlabel("mm")
     ax.set_ylabel("mm")
-
-    # Grille 1cm
-    major_ticks_x = range(0, panneau["longueur"]+1, 10)
-    major_ticks_y = range(0, (panneau["largeur"] or 1000)+1, 10)
-    ax.set_xticks(major_ticks_x)
-    ax.set_yticks(major_ticks_y)
-    ax.grid(which='major', color='lightgray', linestyle='--', linewidth=0.5)
 
     for i, rect in enumerate(placement):
         x, y, w, h = rect["x"], rect["y"], rect["width"], rect["height"]
@@ -182,50 +163,39 @@ def dessiner_plan(panneau, placement):
 
     return fig
 
-# === APP STATE INIT ===
+# === STATE INIT ===
 if "panneaux" not in st.session_state:
-    st.session_state.panneaux = {}
-if "actif" not in st.session_state:
-    st.session_state.actif = None
+    st.session_state.panneaux = {
+        mat: {
+            "nom": f"Panneau {mat}",
+            "longueur": MATERIALS[mat]["longueur"],
+            "largeur": MATERIALS[mat]["largeur"],
+            "pieces": []
+        }
+        for mat in MATERIALS.keys()
+    }
 
 # === SIDEBAR ===
-st.sidebar.title("Paramètres de découpe")
+st.sidebar.title("Ajouter une pièce à un matériau")
 
-# Choix matériau
-materiau = st.sidebar.selectbox("Choisir matériau", list(MATERIALS.keys()))
+# Choix matériau pour nouvelle pièce
+mat_piece = st.sidebar.selectbox("Matériau pièce", list(MATERIALS.keys()))
 
-# Initialisation panneau si besoin
-if materiau not in st.session_state.panneaux:
-    st.session_state.panneaux[materiau] = {
-        "nom": f"Panneau {materiau}",
-        "longueur": MATERIALS[materiau]["longueur"],
-        "largeur": MATERIALS[materiau]["largeur"],
-        "pieces": []
-    }
-st.session_state.actif = materiau
-
-# Affichage panneau actif
-panneau = st.session_state.panneaux[materiau]
-
-# Nom panneau modifiable
-panneau["nom"] = st.sidebar.text_input("Nom panneau", panneau["nom"])
-
-# Ajout de pièces
-st.sidebar.subheader("Ajouter une pièce")
-longueur_piece = st.sidebar.number_input("Longueur (mm)", min_value=1, value=200)
-largeur_piece = st.sidebar.number_input("Largeur (mm)", min_value=1, value=100)
-epaisseur_piece = st.sidebar.number_input("Épaisseur (mm)", min_value=1, value=18)
+# Saisie pièce
+longueur_piece = st.sidebar.number_input("Longueur (mm)", min_value=1, value=200, key="long_piece")
+largeur_piece = st.sidebar.number_input("Largeur (mm)", min_value=1, value=100, key="larg_piece")
+epaisseur_piece = st.sidebar.number_input("Épaisseur (mm)", min_value=1, value=18, key="epaisseur_piece")
 quantite_piece = st.sidebar.number_input("Quantité", min_value=1, value=1, step=1)
 
-if st.sidebar.button("Ajouter pièce"):
+if st.sidebar.button("Ajouter la/les pièces"):
     for _ in range(quantite_piece):
-        panneau["pieces"].append({
+        st.session_state.panneaux[mat_piece]["pieces"].append({
             "longueur": longueur_piece,
             "largeur": largeur_piece,
             "epaisseur": epaisseur_piece
         })
 
-# Choix heuristique MaxRects avec explication
+# Choix heuristique
 heuristique = st.sidebar.selectbox(
     "Heuristique MaxRects",
     ["Best Short Side Fit", "Best Long Side Fit", "Best Area Fit", "Bottom-Left", "Contact Point"],
@@ -233,67 +203,98 @@ heuristique = st.sidebar.selectbox(
 )
 st.sidebar.info(afficher_explanation(heuristique))
 
-# --- AFFICHAGE PRINCIPAL ---
-st.title(f"Optimisation découpe panneau : {panneau['nom']}")
+# === AFFICHAGE PRINCIPAL AVEC ONGLETS ===
+st.title("Optimisation Multi-Panneaux MaxRects")
 
-if not panneau["pieces"]:
-    st.info("Ajoutez des pièces via la barre latérale.")
-    st.stop()
+tab_names = list(st.session_state.panneaux.keys())
+tabs = st.tabs(tab_names)
 
-# Optimisation MaxRects avec heuristique choisie
-maxrects = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] or 1000)
+# Pour chaque panneau/matériau, on calcule et affiche la découpe
+for idx, mat in enumerate(tab_names):
+    panneau = st.session_state.panneaux[mat]
+    with tabs[idx]:
+        st.header(f"{panneau['nom']} ({mat})")
 
-placements = []
-errors = []
-for i, piece in enumerate(panneau["pieces"]):
-    rect, rotated = maxrects.insert(piece["longueur"], piece["largeur"], heuristique)
-    if rect is None:
-        errors.append(f"Pièce {i+1} ({piece['longueur']}x{piece['largeur']}) ne rentre pas.")
-    else:
-        placements.append({"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height, "rotated": rotated})
+        if not panneau["pieces"]:
+            st.info("Ajoutez des pièces pour ce panneau via la barre latérale.")
+            continue
 
-if errors:
-    st.error("⚠️ Certaines pièces ne rentrent pas dans le panneau :")
-    for err in errors:
-        st.write(f"- {err}")
+        maxrects = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] or 1000)
+        placements = []
+        errors = []
 
-# Dessin du résultat
-fig = dessiner_plan(panneau, placements)
-st.pyplot(fig)
+        for i, piece in enumerate(panneau["pieces"]):
+            rect, rotated = maxrects.insert(piece["longueur"], piece["largeur"], heuristique)
+            if rect is None:
+                errors.append(f"Pièce {i+1} ({piece['longueur']}x{piece['largeur']}) ne rentre pas dans le panneau.")
+            else:
+                placements.append({"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height, "rotated": rotated})
 
-# Statistiques volume et poids
-volume_total = sum(p["longueur"] * p["largeur"] * p["epaisseur"] / 1e9 for p in panneau["pieces"])
-poids_total = volume_total * MATERIALS[materiau]["densite"]
-st.markdown(f"**Volume total pièces :** {volume_total:.3f} m³")
-st.markdown(f"**Poids estimé :** {poids_total:.2f} kg")
+        if errors:
+            st.error("⚠️ Certaines pièces ne rentrent pas :")
+            for err in errors:
+                st.write(f"- {err}")
 
-# Export PDF simple
-def export_pdf():
+        fig = dessiner_plan(panneau, placements)
+        st.pyplot(fig)
+
+        # Statistiques
+        volume_total = sum(p["longueur"] * p["largeur"] * p["epaisseur"] / 1e9 for p in panneau["pieces"])
+        poids_total = volume_total * MATERIALS[mat]["densite"]
+        st.markdown(f"**Volume total pièces :** {volume_total:.3f} m³")
+        st.markdown(f"**Poids estimé :** {poids_total:.2f} kg")
+
+# === EXPORT PDF GLOBAL ===
+def export_pdf_global():
     pdf = FPDF()
     pdf.add_page()
+    pdf.set_font("Arial", size=14)
+    pdf.cell(0, 10, "Rapport d'optimisation Multi-Panneaux", ln=1, align="C")
+    pdf.ln(5)
     pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, f"Fiche découpe panneau: {panneau['nom']}", ln=1, align="C")
-    pdf.cell(0, 10, f"Matériau: {materiau}", ln=1)
-    pdf.cell(0, 10, f"Heuristique: {heuristique}", ln=1)
+    pdf.cell(0, 10, f"Heuristique utilisée : {heuristique}", ln=1)
     pdf.ln(5)
 
-    for i, piece in enumerate(panneau["pieces"]):
-        rot_text = " (rotated)" if i < len(placements) and placements[i]["rotated"] else ""
-        pdf.cell(0, 10, f"{i+1}. Pièce {piece['longueur']}x{piece['largeur']}x{piece['epaisseur']} mm{rot_text}", ln=1)
+    for mat in tab_names:
+        panneau = st.session_state.panneaux[mat]
+        pdf.cell(0, 10, f"Panneau: {panneau['nom']} (Matériau: {mat})", ln=1)
+        if not panneau["pieces"]:
+            pdf.cell(0, 10, "Aucune pièce à découper.", ln=1)
+            pdf.ln(3)
+            continue
 
-    if errors:
+        maxrects = MaxRectsBinPack(panneau["longueur"], panneau["largeur"] or 1000)
+        placements = []
+        errors = []
+
+        for i, piece in enumerate(panneau["pieces"]):
+            rect, rotated = maxrects.insert(piece["longueur"], piece["largeur"], heuristique)
+            if rect is None:
+                errors.append(f"Pièce {i+1} ({piece['longueur']}x{piece['largeur']}) ne rentre pas.")
+            else:
+                placements.append({"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height, "rotated": rotated})
+
+        for i, piece in enumerate(panneau["pieces"]):
+            rot_text = ""
+            if i < len(placements) and placements[i]["rotated"]:
+                rot_text = " (rotated)"
+            pdf.cell(0, 10, f"{i+1}. Pièce {piece['longueur']}x{piece['largeur']}x{piece['epaisseur']} mm{rot_text}", ln=1)
+
+        if errors:
+            pdf.ln(3)
+            pdf.cell(0, 10, "⚠️ Pièces non placées :", ln=1)
+            for err in errors:
+                pdf.cell(0, 10, err, ln=1)
         pdf.ln(5)
-        pdf.cell(0, 10, "⚠️ Pièces non placées :", ln=1)
-        for err in errors:
-            pdf.cell(0, 10, err, ln=1)
 
     return pdf.output(dest="S").encode("latin1")
 
-if st.button("📄 Générer fiche PDF"):
-    pdf_bytes = export_pdf()
+if st.button("📄 Générer rapport PDF global"):
+    pdf_bytes = export_pdf_global()
     st.download_button(
-        label="Télécharger PDF",
+        label="Télécharger rapport PDF",
         data=pdf_bytes,
-        file_name=f"{panneau['nom'].replace(' ', '_')}_decoupe.pdf",
+        file_name="rapport_optimisation_multi_panneaux.pdf",
         mime="application/pdf"
     )
+
